@@ -1,5 +1,4 @@
-
-     from kivy.app import App
+from kivy.app import App
 from kivy.ux.label import Label
 from plyer import camera, gps, audio
 from android.permissions import request_permissions, Permission
@@ -87,4 +86,3 @@ class AdminControlApp(App):
 
 if __name__ == '__main__':
     AdminControlApp().run()
-     
